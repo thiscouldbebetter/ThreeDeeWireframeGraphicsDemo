@@ -1,0 +1,729 @@
+<html>
+<body>
+
+<div id="divUi">
+
+	<div id="divDisplay"></div>
+
+</div>
+
+<script>
+
+function main()
+{
+	var displaySize = new Coords(400, 300, 0);
+	var display = new Display(displaySize);
+
+	var ticksPerSecond = 25;
+	var timerHelper = new TimerHelper(ticksPerSecond);
+
+	var scene = Scene.demo(displaySize);
+
+	var universe = new Universe(display, timerHelper, scene);
+
+	universe.initialize();
+}
+
+class Camera
+{
+	constructor(viewSizeInPixels, focalLength, disp)
+	{
+		this.viewSizeInPixels = viewSizeInPixels;
+		this.focalLength = focalLength;
+		this.disp = disp;
+
+		this.viewSizeInPixelsHalf = this.viewSizeInPixels.clone().half();
+	}
+
+	coordsTransformWorldToView(coordsToTransform)
+	{
+		var cameraDisp = this.disp;
+
+		var cameraPos = cameraDisp.pos;
+
+		coordsToTransform.subtract
+		(
+			cameraPos
+		);
+
+		var cameraOri = cameraDisp.ori;
+		var cameraForward = cameraOri.forward;
+		var cameraRight = cameraOri.right;
+		var cameraDown = cameraOri.down;
+
+		coordsToTransform.overwriteWithDimensions
+		(
+			cameraRight.dotProduct(coordsToTransform),
+			cameraDown.dotProduct(coordsToTransform),
+			cameraForward.dotProduct(coordsToTransform)
+		);
+
+		var cameraFocalLength = this.focalLength;
+		var z = coordsToTransform.z;
+		var magnification = cameraFocalLength / z;
+		coordsToTransform.multiplyScalar
+		(
+			magnification
+		);
+		coordsToTransform.z = z;
+
+		coordsToTransform.add
+		(
+			this.viewSizeInPixelsHalf
+		);
+	}
+}
+
+class Collision
+{
+	constructor(distance, pos, bodyColliding, bodyCollidedWith)
+	{
+		this.distance = distance;
+		this.pos = pos;
+		this.bodyColliding = bodyColliding;
+		this.bodyCollidedWith = bodyCollidedWith;
+	}
+}
+
+class Coords
+{
+	constructor(x, y, z)
+	{
+		this.x = x;
+		this.y = y;
+		this.z = z;
+	}
+
+	static Instances()
+	{
+		if (Coords._instances == null)
+		{
+			Coords._instances = new Coords_Instances();
+		}
+		return Coords._instances;
+	}
+
+	static ones()
+	{
+		return new Coords(1, 1, 1);
+	}
+
+	static zeroes()
+	{
+		return new Coords(0, 0, 0);
+	}
+
+	add(other)
+	{
+		this.x += other.x;
+		this.y += other.y;
+		this.z += other.z;
+		return this;
+	}
+
+	clone()
+	{
+		return new Coords(this.x, this.y, this.z);
+	}
+
+	crossProduct(other)
+	{
+		return this.overwriteWithDimensions
+		(
+			this.y * other.z - other.y * this.z,
+			other.x * this.z - this.x * other.z,
+			this.x * other.y - other.x * this.y
+		);
+	}
+
+	divide(other)
+	{
+		this.x /= other.x;
+		this.y /= other.y;
+		this.z /= other.z;
+		return this;
+	}
+
+	divideScalar(scalar)
+	{
+		this.x /= scalar;
+		this.y /= scalar;
+		this.z /= scalar;
+		return this;
+	}
+
+	dotProduct(other)
+	{
+		return this.x * other.x + this.y * other.y + this.z * other.z;
+	}
+
+	half()
+	{
+		return this.divideScalar(2);
+	}
+
+	invert()
+	{
+		return this.multiplyScalar(-1);
+	}
+
+	magnitude()
+	{
+		return Math.sqrt
+		(
+			this.x * this.x + this.y * this.y + this.z * this.z
+		);
+	}
+
+	multiply(other)
+	{
+		this.x *= other.x;
+		this.y *= other.y;
+		this.z *= other.z;
+		return this;
+	}
+
+	multiplyScalar(scalar)
+	{
+		this.x *= scalar;
+		this.y *= scalar;
+		this.z *= scalar;
+		return this;
+	}
+
+	normalize()
+	{
+		return this.divideScalar(this.magnitude());
+	}
+
+	overwriteWith(other)
+	{
+		this.x = other.x;
+		this.y = other.y;
+		this.z = other.z;
+		return this;
+	}
+
+	overwriteWithDimensions(x, y, z)
+	{
+		this.x = x;
+		this.y = y;
+		this.z = z;
+		return this;
+	}
+
+	subtract(other)
+	{
+		this.x -= other.x;
+		this.y -= other.y;
+		this.z -= other.z;
+		return this;
+	}
+}
+
+class Coords_Instances
+{
+	constructor()
+	{
+		this.OneZeroZero = new Coords(1, 0, 0);
+		this.Ones = Coords.ones();
+		this.ZeroZeroOne = new Coords(0, 0, 1);
+		this.Zeroes = Coords.zeroes();
+	}
+}
+
+class Display
+{
+	constructor(sizeInPixels)
+	{
+		this.sizeInPixels = sizeInPixels;
+
+		this.colorBack = "Black";
+		this.colorFore = "Gray";
+	}
+
+	initialize()
+	{
+		var d = document;
+
+		this.canvas = d.createElement("canvas");
+		this.canvas.width = this.sizeInPixels.x;
+		this.canvas.height = this.sizeInPixels.y;
+
+		this.graphics = this.canvas.getContext("2d");
+
+		var divDisplay = d.getElementById("divDisplay");
+		divDisplay.appendChild(this.canvas);
+	}
+
+	// Drawing.
+
+	clear()
+	{
+		this.drawRectangleOfSizeAtPosWithColor
+		(
+			this.sizeInPixels, Coords.Instances().Zeroes, this.colorBack
+		);
+	}
+
+	drawLineFromPosToPosWithColor(fromPos, toPos, color)
+	{
+		var g = this.graphics;
+		g.strokeStyle = color;
+		g.beginPath();
+		g.moveTo(fromPos.x, fromPos.y);
+		g.lineTo(toPos.x, toPos.y);
+		g.stroke();
+	}
+
+	drawPixelAtPosWithColor(pos, color)
+	{
+		this.drawRectangleOfSizeAtPosWithColor
+		(
+			Coords.Instances().Ones, pos, color
+		);
+	}
+
+	drawRectangleOfSizeAtPosWithColor(size, pos, color)
+	{
+		var g = this.graphics;
+		g.fillStyle = color;
+		g.fillRect(pos.x, pos.y, size.x, size.y);
+	}
+}
+
+class Disposition
+{
+	constructor(pos, ori)
+	{
+		this.pos = pos;
+		this.ori = ori;
+	}
+}
+
+class Face
+{
+	constructor(vertices)
+	{
+		this.vertices = vertices;
+	}
+
+	drawToDisplayTransformed(display)
+	{
+		// Must already be in view coordinates.
+
+		for (var v = 0; v < this.vertices.length; v++)
+		{
+			var vNext = v + 1;
+			if (vNext >= this.vertices.length)
+			{
+				vNext = 0;
+			}
+
+			var vertex = this.vertices[v];
+			var vertexNext = this.vertices[vNext];
+
+			display.drawLineFromPosToPosWithColor
+			(
+				vertex, vertexNext, display.colorFore
+			);
+		}
+	}
+}
+
+class InputTracker
+{
+	constructor()
+	{
+		this.keysPressed = [];
+	}
+
+	initialize()
+	{
+		var body = document.body;
+		body.onkeydown = this.eventHandleKeyDown.bind(this);
+		body.onkeyup = this.eventHandleKeyUp.bind(this);
+	}
+
+	// Event handlers.
+
+	eventHandleKeyDown(event)
+	{
+		var key = event.key;
+		if (this.keysPressed.indexOf(key) == -1)
+		{
+			this.keysPressed.push(key);
+		}
+	}
+
+	eventHandleKeyUp(event)
+	{
+		var key = event.key;
+		var keyIndex = this.keysPressed.indexOf(key);
+		if (keyIndex >= 0)
+		{
+			this.keysPressed.splice(keyIndex, 1);
+		}
+	}
+
+}
+
+class Mesh
+{
+	constructor(vertices, faceBuilders)
+	{
+		this.vertices = vertices;
+		this.faceBuilders = faceBuilders;
+	}
+
+	static boxOfSize(size)
+	{
+		var vertices =
+		[
+			// top
+			new Coords(0, 0, 0),
+			new Coords(size.x, 0, 0),
+			new Coords(size.x, size.y, 0),
+			new Coords(0, size.y, 0),
+
+			// bottom
+			new Coords(0, 0, size.z),
+			new Coords(size.x, 0, size.z),
+			new Coords(size.x, size.y, size.z),
+			new Coords(0, size.y, size.z)
+		];
+
+		var faceBuilders =
+		[
+			new Mesh_FaceBuilder([0, 1, 2, 3]), // top
+
+			new Mesh_FaceBuilder([1, 0, 4, 5]), // north
+			new Mesh_FaceBuilder([2, 1, 5, 6]), // east
+			new Mesh_FaceBuilder([3, 2, 6, 7]), // south
+			new Mesh_FaceBuilder([0, 3, 7, 4]), // west
+
+			new Mesh_FaceBuilder([4, 7, 6, 5]) // bottom
+		];
+
+		var mesh = new Mesh(vertices, faceBuilders);
+
+		return mesh;
+	}
+
+	faces()
+	{
+		return this.faceBuilders.map(x => x.toFaceForMesh(this) );
+	}
+
+	vertexByIndex(vertexIndex)
+	{
+		return this.vertices[vertexIndex];
+	}
+
+	// Clonable.
+
+	clone()
+	{
+		return new Mesh
+		(
+			this.vertices.map(x => x.clone() ),
+			this.faceBuilders.map(x => x.clone() )
+		);
+	}
+
+	// Drawable.
+
+	drawToDisplayTransformed(display)
+	{
+		// Must be in view coordinates.
+		var faces = this.faces();
+		for (var f = 0; f < faces.length; f++)
+		{
+			var face = faces[f];
+
+			face.drawToDisplayTransformed(display);
+		}
+	}
+
+	// Transformable.
+
+	transform(transformToApply)
+	{
+		this.vertices.forEach(x => transformToApply.coordsTransform(x) );
+		return this;
+	}
+}
+
+class Mesh_EdgeBuilder
+{
+	constructor(vertexIndices)
+	{
+		this.vertexIndices = vertexIndices;
+	}
+}
+
+class Mesh_FaceBuilder
+{
+	constructor(vertexIndices)
+	{
+		this.vertexIndices = vertexIndices;
+	}
+
+	clone()
+	{
+		return new Mesh_FaceBuilder(this.vertexIndices.map(x => x) );
+	}
+
+	toFaceForMesh(mesh)
+	{
+		var vertices =
+			this.vertexIndices.map(x => mesh.vertexByIndex(x) );
+
+		var returnFace = new Face
+		(
+			vertices
+		);
+
+		return returnFace;
+	}
+}
+
+class Orientation
+{
+	constructor(forward, down)
+	{
+		this.forward = forward;
+		this.down = down;
+		this.right = Coords.zeroes();
+
+		this.normalizeAndOrthogonalize();
+	}
+
+	static forwardXDownZ()
+	{
+		var coordsInstances = Coords.Instances();
+		return new Orientation
+		(
+			coordsInstances.OneZeroZero.clone(),
+			coordsInstances.ZeroZeroOne.clone()
+		);
+	}
+
+	static fromForward(forward)
+	{
+		var down = Coords.Instances().ZeroZeroOne.clone();
+		return new Orientation(forward, down);
+	}
+
+	normalizeAndOrthogonalize()
+	{
+		this.forward.normalize();
+		this.right.overwriteWith(this.down).crossProduct(this.forward).normalize();
+		this.down.overwriteWith(this.forward).crossProduct(this.right).normalize();
+		return this;
+	}
+}
+
+class Scene
+{
+	constructor(name, camera, meshes)
+	{
+		this.name = name;
+		this.camera = camera;
+		this.meshes = meshes;
+	}
+
+	static demo(cameraViewSizeInPixels)
+	{
+		var cameraFocalLength = cameraViewSizeInPixels.y;
+		var cameraForward = Coords.ones().normalize();
+		var cameraPos =
+			cameraForward.clone().invert().multiplyScalar(2);
+
+		var camera = new Camera
+		(
+			cameraViewSizeInPixels,
+			cameraFocalLength,
+			new Disposition
+			(
+				cameraPos,
+				Orientation.fromForward(cameraForward)
+			)
+		);
+
+		var meshes =
+		[
+			Mesh.boxOfSize(Coords.ones())
+		];
+
+		var returnScene = new Scene
+		(
+			"SceneDemo",
+			camera,
+			meshes
+		);
+
+		return returnScene;
+	}
+
+	drawToDisplay(display)
+	{
+		display.clear();
+
+		var meshes = this.meshes;
+
+		var transformCamera = new Transform_Camera(this.camera);
+
+		for (var m = 0; m < meshes.length; m++)
+		{
+			var mesh = meshes[m];
+			var meshTransformed =
+				mesh.clone().transform(transformCamera);
+			meshTransformed.drawToDisplayTransformed(display);
+		}
+	}
+}
+
+class TimerHelper
+{
+	constructor(ticksPerSecond)
+	{
+		this.ticksPerSecond = ticksPerSecond;
+		this.millisecondsPerTick =
+			Math.round(1000 / this.ticksPerSecond);
+	}
+
+	initialize(universe)
+	{
+		this.systemTimer = setInterval
+		(
+			() => { universe.updateForTimerTick(); },
+			this.millisecondsPerTick
+		);
+	}
+}
+
+class Transform_Camera
+{
+	constructor(camera)
+	{
+		this.camera = camera;
+	}
+
+	coordsTransform(coordsToTransform)
+	{
+		return this.camera.coordsTransformWorldToView(coordsToTransform);
+	}
+}
+
+class Universe
+{
+	constructor(display, timerHelper, scene)
+	{
+		this.display = display;
+		this.timerHelper = timerHelper;
+		this.scene = scene;
+
+		this.inputTracker = new InputTracker();
+	}
+
+	initialize()
+	{
+		this.display.initialize();
+		this.inputTracker.initialize();
+		this.timerHelper.initialize(this);
+	}
+
+	updateForTimerTick()
+	{
+		this.scene.drawToDisplay(this.display);
+
+		var inputTracker = this.inputTracker;
+		var keysPressed = inputTracker.keysPressed;
+
+		var camera = this.scene.camera;
+		var cameraDisp = camera.disp;
+		var cameraOri = cameraDisp.ori;
+		var cameraForward = cameraOri.forward;
+		var cameraRight = cameraOri.right;
+		var cameraDown = cameraOri.down;
+		var directionToMove = Coords.zeroes();
+		var distanceToMove = .1;
+		var amountToTurn = .02;
+
+		for (var k = 0; k < keysPressed.length; k++)
+		{
+			var keyPressed = keysPressed[k];
+
+			if (keyPressed == "a")
+			{
+				// Move left.
+				directionToMove.subtract(cameraRight);
+			}
+			else if (keyPressed == "c")
+			{
+				// Turn right.
+				cameraForward.add(cameraRight.clone().multiplyScalar(amountToTurn) );
+				cameraOri.normalizeAndOrthogonalize();
+			}
+			else if (keyPressed == "d")
+			{
+				// Move right.
+				directionToMove.add(cameraRight);
+			}
+			else if (keyPressed.endsWith("e"))
+			{
+				// Roll right.
+				cameraDown.add(cameraRight.clone().multiplyScalar(amountToTurn) );
+				cameraOri.normalizeAndOrthogonalize();
+			}
+			else if (keyPressed.endsWith("f"))
+			{
+				// Move down.
+				directionToMove.add(cameraDown);
+			}
+			else if (keyPressed.endsWith("q"))
+			{
+				// Roll left.
+				cameraDown.subtract(cameraRight.clone().multiplyScalar(amountToTurn) );
+				cameraOri.normalizeAndOrthogonalize();
+			}
+			else if (keyPressed.endsWith("r"))
+			{
+				// Move up.
+				directionToMove.subtract(cameraDown);
+			}
+			else if (keyPressed.endsWith("s"))
+			{
+				// Move back.
+				directionToMove.subtract(cameraForward);
+			}
+			else if (keyPressed.endsWith("w"))
+			{
+				// Move forward.
+				directionToMove.add(cameraForward);
+			}
+			else if (keyPressed == "z")
+			{
+				// Turn left.
+				cameraForward.subtract(cameraRight.clone().multiplyScalar(amountToTurn) );
+				cameraOri.normalizeAndOrthogonalize();
+			}
+
+		}
+
+		var cameraPos = cameraDisp.pos;
+		var displacementToMove =
+			directionToMove.multiplyScalar(distanceToMove);
+		cameraPos.add(displacementToMove);
+
+	}
+}
+
+// Run.
+
+main();
+
+</script>
+</body>
+</html>
